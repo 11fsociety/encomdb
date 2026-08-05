@@ -1,30 +1,31 @@
-// Package tunnel runs a Cloudflare quick tunnel as a supervised child process.
+// Package tunnel exposes the local EncomDB server to the public internet.
 //
-// It looks for the `cloudflared` binary in PATH or a couple of well-known
-// Termux locations, then spawns `cloudflared tunnel --url http://<addr>`.
-// It scrapes the tunnel URL from cloudflared's stderr and exposes it via the
-// URL() method. If cloudflared crashes it restarts with exponential backoff.
+// Default provider is serveo.net (SSH-based reverse tunnel, no account, no
+// binary install — just uses the ssh client Termux already ships with).
+// Set ENCOMDB_TUNNEL=0 to disable. Set ENCOMDB_TUNNEL_SUBDOMAIN=<name> to
+// request a specific subdomain like https://<name>.serveo.net (falls back
+// to a random one if that name is taken).
 //
-// Set ENCOMDB_TUNNEL=0 to disable.
+// Restart backoff: 3s -> 6s -> ... -> 60s cap. Resets to 3s after any run
+// that stayed alive for at least 30s.
 package tunnel
 
 import (
 	"bufio"
 	"context"
-	"errors"
 	"io"
 	"log"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"sync"
 	"time"
 )
 
 type Tunnel struct {
-	targetAddr string // e.g. "localhost:8090"
-	binary     string // path to cloudflared
+	targetAddr string // e.g. "127.0.0.1:8090"
+	sshBinary  string // path to ssh
+	subdomain  string // empty = random
 
 	mu  sync.RWMutex
 	url string
@@ -35,26 +36,19 @@ type Tunnel struct {
 	onURL func(string)
 }
 
-// urlRegex captures the printed "https://xxx.trycloudflare.com" line.
-var urlRegex = regexp.MustCompile(`https://[a-z0-9\-]+\.trycloudflare\.com`)
+// serveoURLRegex catches the URL line: "Forwarding HTTP traffic from https://xxx.serveo.net"
+var serveoURLRegex = regexp.MustCompile(`https://[a-zA-Z0-9\-]+\.serveo\.net`)
 
-// Locate finds a usable cloudflared binary. Returns "" if none found.
-func Locate() string {
-	if p, err := exec.LookPath("cloudflared"); err == nil {
+// LocateSSH finds an ssh client. Empty return = not available.
+func LocateSSH() string {
+	if p, err := exec.LookPath("ssh"); err == nil {
 		return p
 	}
-	candidates := []string{}
-	if h, err := os.UserHomeDir(); err == nil {
-		candidates = append(candidates,
-			filepath.Join(h, "bin", "cloudflared"),
-			filepath.Join(h, ".local", "bin", "cloudflared"),
-		)
+	// Termux common locations
+	candidates := []string{
+		"/data/data/com.termux/files/usr/bin/ssh",
+		"/usr/bin/ssh",
 	}
-	// Termux default prefix
-	candidates = append(candidates,
-		"/data/data/com.termux/files/home/bin/cloudflared",
-		"/data/data/com.termux/files/usr/bin/cloudflared",
-	)
 	for _, c := range candidates {
 		if info, err := os.Stat(c); err == nil && !info.IsDir() {
 			return c
@@ -63,11 +57,12 @@ func Locate() string {
 	return ""
 }
 
-// New constructs a tunnel controller. It does not start anything.
-func New(targetAddr, binary string) *Tunnel {
+// New constructs a tunnel. Does not start anything.
+func New(targetAddr, sshBinary, subdomain string) *Tunnel {
 	return &Tunnel{
 		targetAddr: targetAddr,
-		binary:     binary,
+		sshBinary:  sshBinary,
+		subdomain:  subdomain,
 		done:       make(chan struct{}),
 	}
 }
@@ -82,21 +77,20 @@ func (t *Tunnel) URL() string {
 	return t.url
 }
 
-// Start begins the supervisor goroutine. Blocks until ctx is cancelled.
+// Start begins the supervisor goroutine.
 func (t *Tunnel) Start(ctx context.Context) {
-	if t.binary == "" {
-		log.Printf("[tunnel] cloudflared binary not found; skipping tunnel setup")
+	if t.sshBinary == "" {
+		log.Printf("[tunnel] ssh not found; skipping tunnel setup")
 		return
 	}
-	log.Printf("[tunnel] using %s -> http://%s", t.binary, t.targetAddr)
+	log.Printf("[tunnel] using serveo.net via %s -> http://%s (subdomain=%q)",
+		t.sshBinary, t.targetAddr, t.subdomain)
 
 	ctx, cancel := context.WithCancel(ctx)
 	t.cancel = cancel
-
 	go t.supervise(ctx)
 }
 
-// Stop terminates the supervisor and its child.
 func (t *Tunnel) Stop() {
 	if t.cancel != nil {
 		t.cancel()
@@ -122,9 +116,9 @@ func (t *Tunnel) supervise(ctx context.Context) {
 			return
 		}
 		if err != nil {
-			log.Printf("[tunnel] cloudflared exited: %v (ran for %s)", err, time.Since(start).Round(time.Second))
+			log.Printf("[tunnel] ssh exited: %v (ran for %s)", err, time.Since(start).Round(time.Second))
 		} else {
-			log.Printf("[tunnel] cloudflared exited cleanly (ran for %s)", time.Since(start).Round(time.Second))
+			log.Printf("[tunnel] ssh exited cleanly (ran for %s)", time.Since(start).Round(time.Second))
 		}
 		if time.Since(start) > 30*time.Second {
 			backoff = 3 * time.Second
@@ -143,9 +137,28 @@ func (t *Tunnel) supervise(ctx context.Context) {
 }
 
 func (t *Tunnel) runOnce(ctx context.Context) error {
-	log.Printf("[tunnel] spawning: %s tunnel --no-autoupdate --url http://%s", t.binary, t.targetAddr)
-	cmd := exec.CommandContext(ctx, t.binary, "tunnel", "--no-autoupdate", "--url", "http://"+t.targetAddr)
-	cmd.Env = append(os.Environ(), "TUNNEL_LOGGER_LEVEL=info")
+	// If a subdomain was requested, serveo maps it via the -R remote binding.
+	// Format: -R <subdomain>:80:<host>:<port>
+	//   Random subdomain: -R 80:127.0.0.1:8090
+	//   Fixed subdomain:  -R foo:80:127.0.0.1:8090
+	remote := "80:" + t.targetAddr
+	if t.subdomain != "" {
+		remote = t.subdomain + ":" + remote
+	}
+
+	args := []string{
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+		"-o", "ServerAliveInterval=30",
+		"-o", "ServerAliveCountMax=3",
+		"-o", "ExitOnForwardFailure=yes",
+		"-T", // no tty
+		"-R", remote,
+		"serveo.net",
+	}
+	log.Printf("[tunnel] spawning: ssh %s", quoteArgs(args))
+
+	cmd := exec.CommandContext(ctx, t.sshBinary, args...)
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		return err
@@ -157,13 +170,12 @@ func (t *Tunnel) runOnce(ctx context.Context) error {
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	done := make(chan struct{}, 2)
-	go func() { t.scanForURL(stderr); done <- struct{}{} }()
-	go func() { t.scanForURL(stdout); done <- struct{}{} }()
+	drained := make(chan struct{}, 2)
+	go func() { t.scanForURL(stderr); drained <- struct{}{} }()
+	go func() { t.scanForURL(stdout); drained <- struct{}{} }()
 	err = cmd.Wait()
-	// Wait for scanner goroutines to drain remaining log lines.
-	<-done
-	<-done
+	<-drained
+	<-drained
 	return err
 }
 
@@ -172,7 +184,7 @@ func (t *Tunnel) scanForURL(r io.Reader) {
 	scanner.Buffer(make([]byte, 64*1024), 512*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
-		if u := urlRegex.FindString(line); u != "" {
+		if u := serveoURLRegex.FindString(line); u != "" {
 			t.set(u)
 		}
 		if line != "" {
@@ -195,8 +207,8 @@ func (t *Tunnel) set(u string) {
 	}
 }
 
-// Enabled reports whether the ENCOMDB_TUNNEL env var says the tunnel should run.
-// Default: enabled. Only "0" or "false" (case-insensitive) disables.
+// Enabled reports whether ENCOMDB_TUNNEL says we should run the tunnel.
+// Default: enabled. "0", "false", "no", "off" disable.
 func Enabled() bool {
 	v := os.Getenv("ENCOMDB_TUNNEL")
 	switch v {
@@ -206,4 +218,18 @@ func Enabled() bool {
 	return true
 }
 
-var _ = errors.New // reserved
+// Subdomain returns the requested serveo subdomain (may be empty for random).
+func Subdomain() string {
+	return os.Getenv("ENCOMDB_TUNNEL_SUBDOMAIN")
+}
+
+func quoteArgs(args []string) string {
+	out := ""
+	for i, a := range args {
+		if i > 0 {
+			out += " "
+		}
+		out += a
+	}
+	return out
+}

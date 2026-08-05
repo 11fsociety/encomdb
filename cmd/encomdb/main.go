@@ -60,21 +60,19 @@ func main() {
 			return re.HTML(http.StatusOK, ui.DashboardHTML)
 		})
 
-		// Start the Cloudflare tunnel supervisor if enabled and cloudflared is present.
+		// Start the serveo.net tunnel supervisor if enabled and ssh is present.
 		if tunnel.Enabled() {
-			bin := tunnel.Locate()
-			if bin == "" {
-				log.Printf("[tunnel] cloudflared not found in PATH or $HOME/bin — running LAN-only. See README for install steps.")
+			sshBin := tunnel.LocateSSH()
+			if sshBin == "" {
+				log.Printf("[tunnel] ssh not found — running LAN-only. In Termux: pkg install openssh")
 			} else {
-				// cloudflared connects out to a loopback target — 0.0.0.0 is not
-				// a valid dial address for the child. Convert to 127.0.0.1.
 				target := e.Server.Addr
 				if idx := strings.LastIndex(target, ":"); idx >= 0 {
 					target = "127.0.0.1" + target[idx:]
 				} else {
 					target = "127.0.0.1:" + target
 				}
-				tun = tunnel.New(target, bin)
+				tun = tunnel.New(target, sshBin, tunnel.Subdomain())
 				tun.OnURL(func(u string) {
 					mgr.SetTunnelURL(u)
 				})

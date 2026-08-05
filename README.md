@@ -22,7 +22,9 @@ This will:
 6. Start the server + tunnel
 7. Print the public URL
 
-Wait 2-5 min (Go build is slow on-phone). When it says `[tunnel] PUBLIC URL: https://<random>.trycloudflare.com`, that's your endpoint.
+Wait 2-5 min (Go build is slow on-phone). When it says `[tunnel] PUBLIC URL: https://<random>.serveo.net`, that's your endpoint.
+
+**Want a fixed subdomain?** Restart with `ENCOMDB_TUNNEL_SUBDOMAIN=asmitdb ./bin/encomdb serve --http=0.0.0.0:8090` — you'll get `https://asmitdb.serveo.net` as long as the name isn't already taken.
 
 Then open the URL and go to `/dashboard`. Sign in:
 
@@ -81,7 +83,8 @@ Runtime (Bearer `<api_key>`):
 
 ## Config knobs
 
-- `ENCOMDB_TUNNEL=0` — disable Cloudflare Tunnel (LAN only).
+- `ENCOMDB_TUNNEL=0` — disable the tunnel (LAN only).
+- `ENCOMDB_TUNNEL_SUBDOMAIN=foo` — request `https://foo.serveo.net` (falls back to a random subdomain if taken).
 - `ENCOMDB_ADMIN_EMAIL`, `ENCOMDB_ADMIN_PASSWORD` — override the seeded superuser.
 - `ENCOMDB_PUBLIC_HOST` — override the base URL rendered in connection strings when no tunnel is running.
 
@@ -90,13 +93,15 @@ Runtime (Bearer `<api_key>`):
 - `pb_data/data.db` — PocketBase's own DB (users, `encom_dbs` collection).
 - `pb_data/encom_dbs/<name>.sqlite` — one file per managed DB.
 - `bin/encomdb` — the binary.
-- `~/bin/cloudflared` — the tunnel binary (fetched by install script).
+- The tunnel is `ssh -R … serveo.net` — nothing to install beyond `openssh` (added by installer).
 
-## Quick tunnel URL changes on restart
+## URLs
 
-That's how Cloudflare's free "trycloudflare.com" tunnels work — no domain needed, but the URL is not stable across restarts.
+Default: random `https://<gibberish>.serveo.net` — changes each restart.
 
-Once you own a domain on Cloudflare, we can switch to a named tunnel and the URL becomes permanent. Costs ~₹900/yr for the domain; the tunnel itself stays free.
+Fixed URL: set `ENCOMDB_TUNNEL_SUBDOMAIN=<name>` and you get `https://<name>.serveo.net`. First-come-first-served on serveo — pick something unique.
+
+Serveo has occasional outages. If it's unreachable, set `ENCOMDB_TUNNEL=0` and use LAN-only, or we can swap to another provider (bore, localtunnel, cloudflared) — the tunnel package is one file.
 
 ## License
 
