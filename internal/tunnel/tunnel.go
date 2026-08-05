@@ -37,7 +37,8 @@ type Tunnel struct {
 }
 
 // serveoURLRegex catches the URL line: "Forwarding HTTP traffic from https://xxx.serveo.net"
-var serveoURLRegex = regexp.MustCompile(`https://[a-zA-Z0-9\-]+\.serveo\.net`)
+// or "https://<hash>.serveousercontent.com" (serveo has been rotating between the two).
+var serveoURLRegex = regexp.MustCompile(`https://[a-zA-Z0-9\-]+\.(serveo\.net|serveousercontent\.com)`)
 
 // LocateSSH finds an ssh client. Empty return = not available.
 func LocateSSH() string {
