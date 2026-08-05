@@ -8,7 +8,18 @@ import (
 const collectionName = "rocketdb_projects"
 
 // EnsureCollections creates the `rocketdb_projects` collection (idempotent).
+// Also drops the legacy `encom_dbs` collection (renamed in v0.1.1) if present,
+// so upgraders don't hit index-name collisions.
 func EnsureCollections(app *pb.PocketBase) error {
+	// Drop legacy collection if it exists (harmless if it doesn't).
+	if legacy, _ := app.FindCollectionByNameOrId("encom_dbs"); legacy != nil {
+		if err := app.Delete(legacy); err != nil {
+			// Best-effort — log via error return so caller sees it, but don't panic
+			// mid-boot if we can't clean up.
+			_ = err
+		}
+	}
+
 	if existing, _ := app.FindCollectionByNameOrId(collectionName); existing != nil {
 		return nil
 	}
@@ -29,7 +40,7 @@ func EnsureCollections(app *pb.PocketBase) error {
 		&core.AutodateField{Name: "created", OnCreate: true},
 		&core.AutodateField{Name: "updated", OnCreate: true, OnUpdate: true},
 	)
-	col.AddIndex("idx_encom_dbs_name", true, "name", "")
+	col.AddIndex("idx_rocketdb_projects_name", true, "name", "")
 
 	// Only superusers can read/write DBs via the collection API — our custom
 	// endpoints do their own authorisation via api_key for the SQL runner.
