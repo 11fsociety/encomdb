@@ -1,0 +1,7 @@
+pb_data/
+bin/
+*.log
+*.db
+*.db-wal
+*.db-shm
+.env
