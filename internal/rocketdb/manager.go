@@ -1,4 +1,4 @@
-package dbs
+package rocketdb
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/pocketbase/pocketbase"
+	pb "github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
 
 	_ "modernc.org/sqlite"
@@ -22,7 +22,7 @@ var ErrInvalidName = errors.New("db name must be lowercase letters, digits, unde
 var ErrNotFound = errors.New("database not found")
 
 type Manager struct {
-	app        *pocketbase.PocketBase
+	app        *pb.PocketBase
 	root       string
 	publicHost string
 	tunnelURL  string
@@ -31,7 +31,7 @@ type Manager struct {
 	open map[string]*sql.DB
 }
 
-func NewManager(app *pocketbase.PocketBase, root string) (*Manager, error) {
+func NewManager(app *pb.PocketBase, root string) (*Manager, error) {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, err
 	}
@@ -258,7 +258,7 @@ func (m *Manager) ConnectionInfo(record *core.Record) ConnectionInfo {
 	if host == "" {
 		host = "http://localhost:8090"
 	}
-	endpoint := fmt.Sprintf("%s/api/encom/dbs/%s/sql", host, name)
+	endpoint := fmt.Sprintf("%s/api/rocketdb/dbs/%s/sql", host, name)
 	apiKey := record.GetString("api_key")
 	curl := fmt.Sprintf("curl -X POST %s \\\n  -H \"Authorization: Bearer %s\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"sql\":\"SELECT 1\"}'", endpoint, apiKey)
 	size := int64(0)

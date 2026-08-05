@@ -1,4 +1,4 @@
-package dbs
+package rocketdb
 
 import (
 	"errors"
@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/pocketbase/pocketbase"
+	pb "github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/router"
@@ -14,7 +14,7 @@ import (
 
 // RegisterRoutes wires the Encom API onto the given group.
 // Expected to be pre-namespaced (e.g. /api/encom).
-func RegisterRoutes(g *router.RouterGroup[*core.RequestEvent], mgr *Manager, app *pocketbase.PocketBase) {
+func RegisterRoutes(g *router.RouterGroup[*core.RequestEvent], mgr *Manager, app *pb.PocketBase) {
 	// Admin-only: manage databases.
 	g.GET("/dbs", listDBs(mgr, app)).Bind(apis.RequireSuperuserAuth())
 	g.POST("/dbs", createDB(mgr, app)).Bind(apis.RequireSuperuserAuth())
@@ -42,7 +42,7 @@ type createReq struct {
 	Description string `json:"description"`
 }
 
-func createDB(mgr *Manager, app *pocketbase.PocketBase) func(e *core.RequestEvent) error {
+func createDB(mgr *Manager, app *pb.PocketBase) func(e *core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
 		var req createReq
 		if err := e.BindBody(&req); err != nil {
@@ -67,7 +67,7 @@ func createDB(mgr *Manager, app *pocketbase.PocketBase) func(e *core.RequestEven
 	}
 }
 
-func listDBs(mgr *Manager, app *pocketbase.PocketBase) func(e *core.RequestEvent) error {
+func listDBs(mgr *Manager, app *pb.PocketBase) func(e *core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
 		records, err := app.FindRecordsByFilter(collectionName, "", "-created", 200, 0)
 		if err != nil {
@@ -81,7 +81,7 @@ func listDBs(mgr *Manager, app *pocketbase.PocketBase) func(e *core.RequestEvent
 	}
 }
 
-func getDB(mgr *Manager, app *pocketbase.PocketBase) func(e *core.RequestEvent) error {
+func getDB(mgr *Manager, app *pb.PocketBase) func(e *core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
 		name := e.Request.PathValue("name")
 		record, err := app.FindFirstRecordByFilter(collectionName, "name = {:n}", map[string]any{"n": name})
@@ -92,7 +92,7 @@ func getDB(mgr *Manager, app *pocketbase.PocketBase) func(e *core.RequestEvent) 
 	}
 }
 
-func deleteDB(mgr *Manager, app *pocketbase.PocketBase) func(e *core.RequestEvent) error {
+func deleteDB(mgr *Manager, app *pb.PocketBase) func(e *core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
 		name := e.Request.PathValue("name")
 		if err := mgr.Delete(e.Request.Context(), name); err != nil {
@@ -119,7 +119,7 @@ type sqlResp struct {
 
 const maxRows = 10000
 
-func runSQL(mgr *Manager, app *pocketbase.PocketBase) func(e *core.RequestEvent) error {
+func runSQL(mgr *Manager, app *pb.PocketBase) func(e *core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
 		name := e.Request.PathValue("name")
 		record, err := app.FindFirstRecordByFilter(collectionName, "name = {:n}", map[string]any{"n": name})

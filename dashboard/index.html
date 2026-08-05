@@ -1,11 +1,4 @@
-package ui
-
-// DashboardHTML is a single-file SPA served at /dashboard.
-// It uses the browser's fetch API and the currently logged-in admin token
-// (the admin needs to be logged into /_/ in another tab, or paste a token).
-//
-// Kept intentionally as one embed-friendly string so there's no build step on Termux.
-const DashboardHTML = `<!doctype html>
+<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
@@ -21,15 +14,20 @@ const DashboardHTML = `<!doctype html>
   <nav class="border-b border-gray-800 px-4 py-3 flex items-center justify-between">
     <div class="flex items-center gap-3">
       <span class="font-bold text-lg">EncomPortal</span>
-      <span class="text-xs text-gray-400">v0.1.0</span>
+      <span id="phone-status" class="text-xs px-2 py-1 rounded bg-gray-800 text-gray-400 font-mono">checking…</span>
     </div>
     <div class="flex items-center gap-3 text-sm">
-      <a href="/_/" class="text-gray-400 hover:text-white">Admin</a>
-      <a href="/api/health" class="text-gray-400 hover:text-white">Health</a>
+      <a id="link-admin" href="#" target="_blank" class="text-gray-400 hover:text-white">Admin</a>
+      <a id="link-health" href="#" target="_blank" class="text-gray-400 hover:text-white">Health</a>
     </div>
   </nav>
 
   <main class="max-w-5xl mx-auto p-6">
+    <div id="offline-panel" class="mb-6 p-4 rounded-lg bg-yellow-900/30 border border-yellow-800/50 hidden">
+      <h2 class="font-semibold mb-1 text-yellow-300">Phone offline</h2>
+      <p class="text-sm text-yellow-200/80" id="offline-detail">The phone hasn't reported a tunnel URL yet, or the phone is unreachable.</p>
+    </div>
+
     <div id="auth-panel" class="mb-6 p-4 rounded-lg bg-gray-900 border border-gray-800 hidden">
       <h2 class="font-semibold mb-2">Authenticate</h2>
       <p class="text-sm text-gray-400 mb-3">Sign in with your admin account to manage databases.</p>
@@ -42,13 +40,12 @@ const DashboardHTML = `<!doctype html>
     </div>
 
     <div id="app" class="hidden">
-      <div class="flex items-center justify-between mb-6">
+      <div class="flex items-center justify-between mb-6 flex-wrap gap-2">
         <div>
           <h1 class="text-2xl font-bold">RocketDB</h1>
           <p class="text-gray-400 text-sm">Managed SQL databases running on your phone.</p>
         </div>
         <div class="flex items-center gap-2 flex-wrap">
-          <span id="tunnel-badge" class="hidden text-xs px-2 py-1 rounded bg-green-900/40 text-green-300 border border-green-800/50 font-mono"></span>
           <span id="admin-email-badge" class="text-xs text-gray-400"></span>
           <button id="btn-logout" class="text-xs text-gray-400 hover:text-white">Sign out</button>
           <button id="btn-new" class="bg-white text-black px-4 py-2 rounded text-sm font-medium hover:bg-gray-200">
@@ -116,13 +113,21 @@ const DashboardHTML = `<!doctype html>
 
   <script>
   (function(){
-    const API = "/api/rocketdb";
+    let PHONE_URL = "";              // resolved from /api/tunnel on load
+    let PHONE_UPDATED_AT = null;
+
     const $ = (id) => document.getElementById(id);
     const el = {
-      auth: $("auth-panel"), app: $("app"),
+      status: $("phone-status"),
+      offline: $("offline-panel"),
+      offlineDetail: $("offline-detail"),
+      auth: $("auth-panel"),
+      app: $("app"),
       dbs: $("dbs"), empty: $("empty"),
       modalNew: $("modal-new"), modalInfo: $("modal-info"),
       badge: $("admin-email-badge"),
+      linkAdmin: $("link-admin"),
+      linkHealth: $("link-health"),
     };
 
     function tokenKey() { return "pb_admin_token"; }
@@ -134,16 +139,46 @@ const DashboardHTML = `<!doctype html>
       if (email) localStorage.setItem(emailKey(), email);
     }
 
-    function show(el) { el.classList.remove("hidden"); if (el.classList.contains("modal-open")) return; }
+    function show(el) { el.classList.remove("hidden"); }
     function hide(el) { el.classList.add("hidden"); }
     function showFlex(el) { el.classList.remove("hidden"); el.classList.add("flex"); }
     function hideFlex(el) { el.classList.add("hidden"); el.classList.remove("flex"); }
 
-    async function api(path, opts={}) {
+    async function loadTunnel() {
+      try {
+        const res = await fetch("/api/tunnel", { cache: "no-store" });
+        const j = await res.json();
+        if (j && j.url) {
+          PHONE_URL = j.url.replace(/\/+$/, "");
+          PHONE_UPDATED_AT = j.updated_at || null;
+          el.status.textContent = "phone: " + PHONE_URL.replace(/^https?:\/\//, "");
+          el.status.classList.remove("bg-gray-800", "text-gray-400");
+          el.status.classList.add("bg-green-900/40", "text-green-300");
+          hide(el.offline);
+          el.linkAdmin.href = PHONE_URL + "/_/";
+          el.linkHealth.href = PHONE_URL + "/api/health";
+        } else {
+          PHONE_URL = "";
+          el.status.textContent = "phone: offline";
+          el.status.classList.remove("bg-gray-800", "bg-green-900/40", "text-gray-400", "text-green-300");
+          el.status.classList.add("bg-yellow-900/40", "text-yellow-300");
+          show(el.offline);
+          el.offlineDetail.textContent = j && j.note ? j.note : "no tunnel registered yet";
+        }
+      } catch (e) {
+        el.status.textContent = "portal: error";
+        show(el.offline);
+        el.offlineDetail.textContent = "portal API error: " + e.message;
+      }
+    }
+
+    async function api(path, opts) {
+      if (!PHONE_URL) throw new Error("phone offline");
+      opts = opts || {};
       const headers = Object.assign({"Content-Type": "application/json"}, opts.headers || {});
       const tok = getToken();
       if (tok) headers["Authorization"] = tok;
-      const res = await fetch(path, Object.assign({}, opts, {headers}));
+      const res = await fetch(PHONE_URL + path, Object.assign({}, opts, {headers}));
       const text = await res.text();
       let body = null; try { body = text ? JSON.parse(text) : null; } catch { body = text; }
       if (!res.ok) {
@@ -154,7 +189,8 @@ const DashboardHTML = `<!doctype html>
     }
 
     async function login(email, password) {
-      const res = await fetch("/api/collections/_superusers/auth-with-password", {
+      if (!PHONE_URL) throw new Error("phone offline — try again in a moment");
+      const res = await fetch(PHONE_URL + "/api/collections/_superusers/auth-with-password", {
         method: "POST",
         headers: {"Content-Type":"application/json"},
         body: JSON.stringify({identity: email, password: password}),
@@ -171,8 +207,9 @@ const DashboardHTML = `<!doctype html>
     }
 
     async function refresh() {
+      if (!PHONE_URL) return;
       try {
-        const list = await api(API + "/dbs");
+        const list = await api("/api/rocketdb/dbs");
         if (!Array.isArray(list) || list.length === 0) {
           hide(el.dbs); show(el.empty);
           el.dbs.innerHTML = "";
@@ -206,7 +243,7 @@ const DashboardHTML = `<!doctype html>
           setToken("", "");
           renderAuthState();
         } else {
-          alert(e.message);
+          console.warn(e.message);
         }
       }
     }
@@ -221,7 +258,7 @@ const DashboardHTML = `<!doctype html>
       const err = $("new-error");
       err.classList.add("hidden"); err.textContent = "";
       try {
-        await api(API + "/dbs", { method: "POST", body: JSON.stringify({name, description: desc}) });
+        await api("/api/rocketdb/dbs", { method: "POST", body: JSON.stringify({name, description: desc}) });
         hideFlex(el.modalNew);
         $("new-name").value = ""; $("new-desc").value = "";
         await refresh();
@@ -232,12 +269,12 @@ const DashboardHTML = `<!doctype html>
 
     async function deleteDB(name){
       if (!confirm("Delete database \"" + name + "\"? This is permanent.")) return;
-      await api(API + "/dbs/" + encodeURIComponent(name), { method: "DELETE" });
+      await api("/api/rocketdb/dbs/" + encodeURIComponent(name), { method: "DELETE" });
       await refresh();
     }
 
     async function showConnect(name){
-      const info = await api(API + "/dbs/" + encodeURIComponent(name));
+      const info = await api("/api/rocketdb/dbs/" + encodeURIComponent(name));
       $("info-endpoint").value = info.sql_endpoint;
       $("info-apikey").value = info.api_key;
       $("info-curl").textContent = info.curl_example;
@@ -248,29 +285,16 @@ const DashboardHTML = `<!doctype html>
       navigator.clipboard.writeText(text).then(function(){}, function(){});
     }
 
-    async function refreshTunnel(){
-      const tb = document.getElementById("tunnel-badge");
-      if (!tb) return;
-      try {
-        const info = await api(API + "/tunnel");
-        if (info && info.tunnel_url) {
-          tb.textContent = "Public: " + info.tunnel_url.replace(/^https?:\/\//, "");
-          tb.classList.remove("hidden");
-          tb.title = info.tunnel_url;
-        } else {
-          tb.textContent = "LAN only";
-          tb.classList.remove("hidden");
-        }
-      } catch (_) {}
-    }
-
     function renderAuthState(){
+      if (!PHONE_URL) {
+        hide(el.auth); hide(el.app);
+        return;
+      }
       const tok = getToken();
       if (tok) {
         hide(el.auth); show(el.app);
         el.badge.textContent = localStorage.getItem(emailKey()) || "";
         refresh();
-        refreshTunnel();
       } else {
         show(el.auth); hide(el.app);
       }
@@ -307,9 +331,14 @@ const DashboardHTML = `<!doctype html>
       }
     });
 
-    renderAuthState();
-    setInterval(function(){ if (getToken()) { refresh(); refreshTunnel(); } }, 5000);
+    (async function bootstrap(){
+      await loadTunnel();
+      renderAuthState();
+      setInterval(function(){
+        loadTunnel().then(function(){ if (getToken() && PHONE_URL) refresh(); });
+      }, 10000);
+    })();
   })();
   </script>
 </body>
-</html>`
+</html>

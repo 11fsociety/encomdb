@@ -1,15 +1,14 @@
-package dbs
+package rocketdb
 
 import (
-	"github.com/pocketbase/pocketbase"
+	pb "github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
 )
 
-const collectionName = "encom_dbs"
+const collectionName = "rocketdb_projects"
 
-// EnsureCollections creates the `encom_dbs` collection (idempotent).
-// v0.39 API: use core.Collection + core.Field* types, save via app.Save().
-func EnsureCollections(app *pocketbase.PocketBase) error {
+// EnsureCollections creates the `rocketdb_projects` collection (idempotent).
+func EnsureCollections(app *pb.PocketBase) error {
 	if existing, _ := app.FindCollectionByNameOrId(collectionName); existing != nil {
 		return nil
 	}

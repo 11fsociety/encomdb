@@ -1,0 +1,9 @@
+{
+  "name": "encomportal",
+  "version": "0.1.0",
+  "private": true,
+  "description": "EncomDB dashboard (Vercel-hosted controller). Fixed URL, talks to phone tunnel over CORS.",
+  "dependencies": {
+    "@vercel/kv": "^3.0.0"
+  }
+}

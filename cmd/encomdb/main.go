@@ -10,17 +10,17 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/11fsociety/encomdb/internal/dbs"
+	"github.com/11fsociety/encomdb/internal/rocketdb"
 	"github.com/11fsociety/encomdb/internal/tunnel"
 	"github.com/11fsociety/encomdb/internal/ui"
-	"github.com/pocketbase/pocketbase"
+	pb "github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
 )
 
 const version = "0.1.0"
 
 func main() {
-	app := pocketbase.New()
+	app := pb.New()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -28,18 +28,18 @@ func main() {
 	var tun *tunnel.Tunnel
 
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
-		if err := dbs.EnsureCollections(app); err != nil {
+		if err := rocketdb.EnsureCollections(app); err != nil {
 			return err
 		}
-		if err := dbs.EnsureDefaultAdmin(app); err != nil {
+		if err := rocketdb.EnsureDefaultAdmin(app); err != nil {
 			log.Printf("warning: could not seed default admin: %v", err)
 		}
 
-		root := filepath.Join(app.DataDir(), "encom_dbs")
+		root := filepath.Join(app.DataDir(), "rocketdb")
 		if err := os.MkdirAll(root, 0o755); err != nil {
 			return err
 		}
-		mgr, err := dbs.NewManager(app, root)
+		mgr, err := rocketdb.NewManager(app, root)
 		if err != nil {
 			return err
 		}
@@ -50,8 +50,8 @@ func main() {
 		}
 		mgr.SetPublicHost(publicHost)
 
-		encomGroup := e.Router.Group("/api/encom")
-		dbs.RegisterRoutes(encomGroup, mgr, app)
+		rocketGroup := e.Router.Group("/api/rocketdb")
+		rocketdb.RegisterRoutes(rocketGroup, mgr, app)
 
 		e.Router.GET("/dashboard", func(re *core.RequestEvent) error {
 			return re.HTML(http.StatusOK, ui.DashboardHTML)
@@ -73,8 +73,13 @@ func main() {
 					target = "127.0.0.1:" + target
 				}
 				tun = tunnel.New(target, sshBin, tunnel.Subdomain())
+				poster := tunnel.NewRegistryPoster()
+				if poster.Enabled() {
+					log.Printf("[tunnel/registry] will publish URL to EncomPortal registry")
+				}
 				tun.OnURL(func(u string) {
 					mgr.SetTunnelURL(u)
+					go poster.Post(context.Background(), u)
 				})
 				tun.Start(ctx)
 			}
@@ -82,7 +87,7 @@ func main() {
 			log.Printf("[tunnel] disabled via ENCOMDB_TUNNEL=0")
 		}
 
-		log.Printf("encomdb %s ready — admin: /_/  dashboard: /dashboard", version)
+		log.Printf("EncomPortal core %s ready — admin: /_/  dashboard: /dashboard", version)
 		return e.Next()
 	})
 

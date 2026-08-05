@@ -1,107 +1,96 @@
-# EncomDB
+# EncomPortal
 
-Self-hosted SQL database platform. One Go binary. Runs on your laptop, on a Raspberry Pi, or on a phone in Termux. Built on top of [PocketBase](https://pocketbase.io).
+**EncomPortal** is a self-hosted backend platform that runs on your phone. **RocketDB** is its flagship database module — click "New database" in the dashboard and get a managed SQLite backend with a real endpoint + API key. All of it runs inside Termux, no root, no cloud fees.
 
-- Click **"New database"** in the dashboard → gets you a fresh SQLite DB + API key + connection string.
-- Every managed DB is one SQLite file. Talk to it with SQL over HTTP.
-- Publicly reachable out of the box via **Cloudflare Tunnel** (free, no domain required).
-- No Docker, no root, no Postgres server.
+- **RocketDB** — one SQLite file per project, SQL over HTTP.
+- **serveo.net tunnel** — free public URL to reach your phone.
+- **EncomPortal dashboard** — a fixed URL on Vercel (`https://encomportal.vercel.app`) that always finds your phone even when its tunnel URL rotates.
 
 ## One-command Termux install
+
+Basic (LAN + random tunnel URL):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/11fsociety/encomdb/main/scripts/install-termux.sh | sh
 ```
 
-This will:
-1. `pkg install git golang wget termux-api`
-2. Clone the repo to `~/encomdb`
-3. Download `cloudflared` to `~/bin/`
-4. Build the binary
-5. Install a `Termux:Boot` supervisor so it survives reboots
-6. Start the server + tunnel
-7. Print the public URL
-
-Wait 2-5 min (Go build is slow on-phone). When it says `[tunnel] PUBLIC URL: https://<random>.serveo.net`, that's your endpoint.
-
-**Want a fixed subdomain?** Restart with `ENCOMDB_TUNNEL_SUBDOMAIN=asmitdb ./bin/encomdb serve --http=0.0.0.0:8090` — you'll get `https://asmitdb.serveo.net` as long as the name isn't already taken.
-
-Then open the URL and go to `/dashboard`. Sign in:
-
-- Email: `asmitdash44@gmail.com`
-- Password: `asmitdash44`
-
-(Override with `ENCOMDB_ADMIN_EMAIL` / `ENCOMDB_ADMIN_PASSWORD`.)
-
-## Laptop dev
+With the portal wired (recommended):
 
 ```bash
-go build -o bin/encomdb ./cmd/encomdb
-./bin/encomdb serve --http=0.0.0.0:8090
+ENCOMDB_TUNNEL_REGISTRY_URL=https://encomportal.vercel.app/api/tunnel \
+ENCOMDB_TUNNEL_REGISTRY_TOKEN=<your-secret> \
+  bash -c "curl -fsSL https://raw.githubusercontent.com/11fsociety/encomdb/main/scripts/install-termux.sh | sh"
 ```
 
-Then [http://localhost:8090/dashboard](http://localhost:8090/dashboard). Tunnel is disabled automatically if `cloudflared` isn't installed locally — the server logs `LAN only`.
+The install script:
+1. `pkg install git golang openssh termux-api`
+2. Clones the repo to `~/encomdb`
+3. Builds the binary from source
+4. Installs a Termux:Boot supervisor
+5. Starts the server + serveo.net tunnel
+6. If registry env vars are set, phones home the URL to your Vercel portal
 
-## Using a database
+Wait 2-5 min. When you see `[tunnel] PUBLIC URL: https://<random>.serveo.net`, that's your phone.
 
-1. Sign into `/dashboard`.
-2. Click **"+ New database"**, give it a name (lowercase letters/digits/`_`/`-`, 3-40 chars).
-3. Click **"Connect"** on the card. Copy the endpoint, API key, or the curl snippet — the endpoint already points at your public tunnel URL.
-4. Talk to it:
+## First-time defaults
+
+- Admin email: `asmitdash44@gmail.com`
+- Admin password: `asmitdash44`
+
+Override with `ENCOMDB_ADMIN_EMAIL` / `ENCOMDB_ADMIN_PASSWORD`.
+
+## Deploying the EncomPortal dashboard on Vercel
+
+See [dashboard/README.md](./dashboard/README.md) for the 3-minute setup. Fixed URL forever, free forever, tunnel URLs auto-tracked.
+
+## Using a RocketDB database
+
+1. Open the portal (`https://encomportal.vercel.app`) or the on-phone dashboard (`http://<tunnel>/dashboard`).
+2. Sign in with the admin credentials.
+3. Click **"+ New database"**, give it a name.
+4. Click **"Connect"** — copy the endpoint, API key, or the ready-made curl.
 
 ```bash
-curl -X POST https://<tunnel>.trycloudflare.com/api/encom/dbs/my_project/sql \
+curl -X POST https://<phone>/api/rocketdb/dbs/my_project/sql \
   -H "Authorization: Bearer encomdb_<key>" \
   -H "Content-Type: application/json" \
   -d '{"sql":"CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)"}'
-
-curl -X POST https://<tunnel>.trycloudflare.com/api/encom/dbs/my_project/sql \
-  -H "Authorization: Bearer encomdb_<key>" \
-  -H "Content-Type: application/json" \
-  -d '{"sql":"INSERT INTO notes(body) VALUES (?)","args":["hi"]}'
 ```
 
-Reads return `{columns, rows, duration_ms}`. Writes return `{rows_affected, duration_ms}`. Result sets capped at 10,000 rows.
+Reads return `{columns, rows, duration_ms}`. Writes return `{rows_affected, duration_ms}`. Result sets are capped at 10,000 rows per query.
 
-## What the API looks like
+## API surface
 
-Admin (PB superuser JWT required):
-
-| Method | Path | What |
-|---|---|---|
-| POST | `/api/encom/dbs` | create DB |
-| GET  | `/api/encom/dbs` | list DBs |
-| GET  | `/api/encom/dbs/{name}` | one DB's connection info |
-| DELETE | `/api/encom/dbs/{name}` | delete DB |
-| GET  | `/api/encom/tunnel` | current public URL |
-
-Runtime (Bearer `<api_key>`):
+Admin (superuser JWT):
 
 | Method | Path | What |
 |---|---|---|
-| POST | `/api/encom/dbs/{name}/sql` | run SQL |
+| POST | `/api/rocketdb/dbs` | create DB |
+| GET  | `/api/rocketdb/dbs` | list DBs |
+| GET  | `/api/rocketdb/dbs/{name}` | one DB's connection info |
+| DELETE | `/api/rocketdb/dbs/{name}` | delete DB |
+| GET  | `/api/rocketdb/tunnel` | current tunnel URL |
 
-## Config knobs
+Runtime (Bearer API key):
 
-- `ENCOMDB_TUNNEL=0` — disable the tunnel (LAN only).
-- `ENCOMDB_TUNNEL_SUBDOMAIN=foo` — request `https://foo.serveo.net` (falls back to a random subdomain if taken).
-- `ENCOMDB_ADMIN_EMAIL`, `ENCOMDB_ADMIN_PASSWORD` — override the seeded superuser.
-- `ENCOMDB_PUBLIC_HOST` — override the base URL rendered in connection strings when no tunnel is running.
+| Method | Path | What |
+|---|---|---|
+| POST | `/api/rocketdb/dbs/{name}/sql` | run SQL |
+
+## Config
+
+- `ENCOMDB_TUNNEL=0` — disable tunnel (LAN only)
+- `ENCOMDB_TUNNEL_SUBDOMAIN=foo` — request `https://foo.serveo.net`
+- `ENCOMDB_TUNNEL_REGISTRY_URL` — post current tunnel URL to your Vercel portal
+- `ENCOMDB_TUNNEL_REGISTRY_TOKEN` — shared secret with the portal
+- `ENCOMDB_ADMIN_EMAIL`, `ENCOMDB_ADMIN_PASSWORD` — override seeded superuser
+- `ENCOMDB_PUBLIC_HOST` — fallback for connection strings when no tunnel is up
 
 ## Where things live
 
-- `pb_data/data.db` — PocketBase's own DB (users, `encom_dbs` collection).
-- `pb_data/encom_dbs/<name>.sqlite` — one file per managed DB.
-- `bin/encomdb` — the binary.
-- The tunnel is `ssh -R … serveo.net` — nothing to install beyond `openssh` (added by installer).
-
-## URLs
-
-Default: random `https://<gibberish>.serveo.net` — changes each restart.
-
-Fixed URL: set `ENCOMDB_TUNNEL_SUBDOMAIN=<name>` and you get `https://<name>.serveo.net`. First-come-first-served on serveo — pick something unique.
-
-Serveo has occasional outages. If it's unreachable, set `ENCOMDB_TUNNEL=0` and use LAN-only, or we can swap to another provider (bore, localtunnel, cloudflared) — the tunnel package is one file.
+- `pb_data/data.db` — internal state DB (superusers, RocketDB project registry).
+- `pb_data/rocketdb/<name>.sqlite` — one file per managed database.
+- `bin/encomdb` — the server binary.
 
 ## License
 

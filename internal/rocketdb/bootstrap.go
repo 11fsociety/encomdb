@@ -1,11 +1,11 @@
-package dbs
+package rocketdb
 
 import (
 	"errors"
 	"log"
 	"os"
 
-	"github.com/pocketbase/pocketbase"
+	pb "github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
 )
 
@@ -22,7 +22,7 @@ const (
 //
 //	ENCOMDB_ADMIN_EMAIL
 //	ENCOMDB_ADMIN_PASSWORD
-func EnsureDefaultAdmin(app *pocketbase.PocketBase) error {
+func EnsureDefaultAdmin(app *pb.PocketBase) error {
 	email := os.Getenv("ENCOMDB_ADMIN_EMAIL")
 	if email == "" {
 		email = defaultAdminEmail
