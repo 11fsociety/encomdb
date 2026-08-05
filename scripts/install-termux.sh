@@ -6,8 +6,8 @@
 #
 # Optional env inputs (set before piping to sh):
 #   ENCOMDB_TUNNEL_SUBDOMAIN=asmitdb          request a fixed serveo subdomain
-#   ENCOMDB_TUNNEL_REGISTRY_URL=https://encomportal.vercel.app/api/tunnel
-#   ENCOMDB_TUNNEL_REGISTRY_TOKEN=<hex>       shared secret with EncomPortal
+#   ENCOMDB_TUNNEL_REGISTRY_URL=<url>         defaults to encomportal.vercel.app
+#   ENCOMDB_TUNNEL_REGISTRY_TOKEN=<hex>       optional shared secret
 #
 # What it does:
 #   1. Installs pkg deps (git, golang, openssh, termux-api).
@@ -19,6 +19,10 @@ set -eu
 
 REPO_URL="${ENCOMDB_REPO:-https://github.com/11fsociety/encomdb.git}"
 INSTALL_DIR="${ENCOMDB_HOME:-$HOME/encomdb}"
+
+# Default the tunnel registry to the public EncomPortal deployment so a
+# fresh phone auto-registers its serveo URL with zero config.
+: "${ENCOMDB_TUNNEL_REGISTRY_URL:=https://encomportal.vercel.app/api/tunnel}"
 
 echo "[encomdb] installing pkg deps…"
 yes | pkg update >/dev/null 2>&1 || true
