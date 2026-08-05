@@ -143,6 +143,7 @@ func (t *Tunnel) supervise(ctx context.Context) {
 }
 
 func (t *Tunnel) runOnce(ctx context.Context) error {
+	log.Printf("[tunnel] spawning: %s tunnel --no-autoupdate --url http://%s", t.binary, t.targetAddr)
 	cmd := exec.CommandContext(ctx, t.binary, "tunnel", "--no-autoupdate", "--url", "http://"+t.targetAddr)
 	cmd.Env = append(os.Environ(), "TUNNEL_LOGGER_LEVEL=info")
 	stderr, err := cmd.StderrPipe()
@@ -156,9 +157,14 @@ func (t *Tunnel) runOnce(ctx context.Context) error {
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	go t.scanForURL(stderr)
-	go t.scanForURL(stdout)
-	return cmd.Wait()
+	done := make(chan struct{}, 2)
+	go func() { t.scanForURL(stderr); done <- struct{}{} }()
+	go func() { t.scanForURL(stdout); done <- struct{}{} }()
+	err = cmd.Wait()
+	// Wait for scanner goroutines to drain remaining log lines.
+	<-done
+	<-done
+	return err
 }
 
 func (t *Tunnel) scanForURL(r io.Reader) {

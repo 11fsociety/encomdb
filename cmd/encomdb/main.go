@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/11fsociety/encomdb/internal/dbs"
@@ -65,7 +66,15 @@ func main() {
 			if bin == "" {
 				log.Printf("[tunnel] cloudflared not found in PATH or $HOME/bin — running LAN-only. See README for install steps.")
 			} else {
-				tun = tunnel.New(e.Server.Addr, bin)
+				// cloudflared connects out to a loopback target — 0.0.0.0 is not
+				// a valid dial address for the child. Convert to 127.0.0.1.
+				target := e.Server.Addr
+				if idx := strings.LastIndex(target, ":"); idx >= 0 {
+					target = "127.0.0.1" + target[idx:]
+				} else {
+					target = "127.0.0.1:" + target
+				}
+				tun = tunnel.New(target, bin)
 				tun.OnURL(func(u string) {
 					mgr.SetTunnelURL(u)
 				})
