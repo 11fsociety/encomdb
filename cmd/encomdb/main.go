@@ -10,6 +10,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/11fsociety/encomdb/internal/auth"
 	"github.com/11fsociety/encomdb/internal/rocketdb"
 	"github.com/11fsociety/encomdb/internal/tunnel"
 	"github.com/11fsociety/encomdb/internal/ui"
@@ -29,6 +30,9 @@ func main() {
 
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		if err := rocketdb.EnsureCollections(app); err != nil {
+			return err
+		}
+		if err := auth.EnsureCollections(app); err != nil {
 			return err
 		}
 		if err := rocketdb.EnsureDefaultAdmin(app); err != nil {
@@ -52,6 +56,10 @@ func main() {
 
 		rocketGroup := e.Router.Group("/api/rocketdb")
 		rocketdb.RegisterRoutes(rocketGroup, mgr, app)
+
+		authMgr := auth.NewManager(app)
+		authGroup := e.Router.Group("/api/auth")
+		auth.RegisterRoutes(authGroup, authMgr, app)
 
 		e.Router.GET("/dashboard", func(re *core.RequestEvent) error {
 			return re.HTML(http.StatusOK, ui.DashboardHTML)
