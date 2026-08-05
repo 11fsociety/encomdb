@@ -76,6 +76,7 @@ func main() {
 				poster := tunnel.NewRegistryPoster()
 				if poster.Enabled() {
 					log.Printf("[tunnel/registry] will publish URL to EncomPortal registry")
+					go poster.StartKeepAlive(ctx)
 				}
 				tun.OnURL(func(u string) {
 					mgr.SetTunnelURL(u)

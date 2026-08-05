@@ -1,85 +1,30 @@
-// EncomPortal — tunnel registry endpoint.
+// EncomPortal — tunnel registry endpoint (in-memory, no external DB).
 //
-// GET  /api/tunnel                    → { url, updated_at }
-// POST /api/tunnel  { url }           → stores the current phone tunnel URL
-//                                        requires Authorization: Bearer <ENCOMDB_TUNNEL_REGISTRY_TOKEN>
+// GET  /api/tunnel                → { url, updated_at }
+// POST /api/tunnel  { url }       → stores the current phone tunnel URL
 //
-// Talks to Upstash Redis directly over their REST API (avoids the
-// @vercel/kv wrapper — one less dep to explain).
+// Storage: process-global variable. Survives while the Vercel serverless
+// function stays warm (minutes to hours). Phone keeps re-posting every
+// 60s via the tunnel supervisor, so a cold-start reset just means the
+// dashboard sees "offline" for up to 60s until the next post.
+//
+// No auth by default. Set ENCOMDB_TUNNEL_REGISTRY_TOKEN in the Vercel env
+// to require Authorization: Bearer <token> on POST.
 
-const KV_KEY = 'encomdb:tunnel';
-
-function kvURL() {
-  return (process.env.KV_REST_API_URL || '').replace(/\/+$/, '');
-}
-function kvToken() {
-  return process.env.KV_REST_API_TOKEN || '';
-}
-
-async function kvGet(key) {
-  const res = await fetch(`${kvURL()}/get/${encodeURIComponent(key)}`, {
-    headers: { Authorization: `Bearer ${kvToken()}` },
-  });
-  if (!res.ok) {
-    throw new Error(`kv get ${res.status}: ${await res.text()}`);
-  }
-  const j = await res.json();
-  return j?.result ?? null;
-}
-
-async function kvSet(key, value) {
-  const res = await fetch(`${kvURL()}/set/${encodeURIComponent(key)}`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${kvToken()}`,
-      'Content-Type': 'text/plain',
-    },
-    body: typeof value === 'string' ? value : JSON.stringify(value),
-  });
-  if (!res.ok) {
-    throw new Error(`kv set ${res.status}: ${await res.text()}`);
-  }
-  return true;
-}
+globalThis.__encomdb_tunnel = globalThis.__encomdb_tunnel || { url: null, updated_at: null };
 
 export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(204).end();
 
-  if (!kvURL() || !kvToken()) {
-    return res.status(200).json({
-      url: null,
-      updated_at: null,
-      error: 'kv-not-configured',
-      detail: 'KV_REST_API_URL and KV_REST_API_TOKEN must be set',
-    });
-  }
-
   if (req.method === 'GET') {
-    try {
-      const raw = await kvGet(KV_KEY);
-      if (!raw) {
-        return res.status(200).json({ url: null, updated_at: null, note: 'no tunnel registered yet' });
-      }
-      let record;
-      try { record = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch { record = null; }
-      if (!record) {
-        return res.status(200).json({ url: null, updated_at: null, note: 'stored value malformed' });
-      }
-      return res.status(200).json(record);
-    } catch (err) {
-      return res.status(200).json({
-        url: null,
-        updated_at: null,
-        error: 'kv-read-failed',
-        detail: String(err?.message || err),
-      });
+    const rec = globalThis.__encomdb_tunnel;
+    if (!rec.url) {
+      return res.status(200).json({ url: null, updated_at: null, note: 'no tunnel registered yet' });
     }
+    return res.status(200).json(rec);
   }
 
   if (req.method === 'POST') {
-    // Optional bearer-token guard. If ENCOMDB_TUNNEL_REGISTRY_TOKEN is set,
-    // require it. Otherwise the endpoint is open — fine for personal use
-    // where the domain is unadvertised and the payload is just a URL.
     const expected = (process.env.ENCOMDB_TUNNEL_REGISTRY_TOKEN || '').trim();
     if (expected) {
       const auth = req.headers.authorization || '';
@@ -96,13 +41,8 @@ export default async function handler(req, res) {
     if (!url) return res.status(400).json({ error: 'url required' });
     if (!/^https?:\/\//i.test(url)) return res.status(400).json({ error: 'url must start with http:// or https://' });
 
-    const record = { url, updated_at: new Date().toISOString() };
-    try {
-      await kvSet(KV_KEY, record);
-    } catch (err) {
-      return res.status(500).json({ error: 'kv-write-failed', detail: String(err?.message || err) });
-    }
-    return res.status(200).json({ ok: true, ...record });
+    globalThis.__encomdb_tunnel = { url, updated_at: new Date().toISOString() };
+    return res.status(200).json({ ok: true, ...globalThis.__encomdb_tunnel });
   }
 
   return res.status(405).json({ error: 'method not allowed' });
